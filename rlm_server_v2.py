@@ -745,84 +745,543 @@ async def get_trajectory(trajectory_id: str):
 
 @app.get("/visualizer")
 async def visualizer():
-    """Simple HTML visualizer for trajectories."""
+    """Professional HTML visualizer for RLM trajectories."""
     html_content = """
     <!DOCTYPE html>
-    <html>
+    <html lang="en">
     <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
         <title>RLM Trajectory Visualizer</title>
+        <script src="https://cdn.tailwindcss.com"></script>
+        <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css">
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
+        <script src="https://unpkg.com/lucide@latest"></script>
         <style>
-            body { font-family: monospace; margin: 20px; background: #1e1e1e; color: #d4d4d4; }
-            .container { max-width: 1200px; margin: 0 auto; }
-            h1 { color: #4ec9b0; }
-            .trajectory { border: 1px solid #444; margin: 10px 0; padding: 10px; border-radius: 4px; }
-            .code { background: #252526; padding: 10px; overflow-x: auto; white-space: pre; }
-            .output { background: #1e1e1e; padding: 10px; color: #ce9178; }
-            .final { background: #4ec9b0; color: #000; padding: 10px; font-weight: bold; }
-            .subquery { margin-left: 20px; border-left: 2px solid #4ec9b0; padding-left: 10px; }
+            .timeline-line {
+                position: absolute;
+                left: 24px;
+                top: 48px;
+                bottom: 0;
+                width: 2px;
+                background: linear-gradient(to bottom, #3b82f6, #8b5cf6);
+            }
+            .glass-panel {
+                background: rgba(30, 41, 59, 0.7);
+                backdrop-filter: blur(10px);
+                border: 1px solid rgba(255, 255, 255, 0.1);
+            }
+            .code-block {
+                font-family: 'Fira Code', 'Consolas', monospace;
+                font-size: 13px;
+                line-height: 1.5;
+            }
+            .tree-branch {
+                position: relative;
+                padding-left: 24px;
+            }
+            .tree-branch::before {
+                content: '';
+                position: absolute;
+                left: 8px;
+                top: 0;
+                bottom: 0;
+                width: 2px;
+                background: #4b5563;
+            }
+            .tree-node::before {
+                content: '';
+                position: absolute;
+                left: -16px;
+                top: 20px;
+                width: 12px;
+                height: 2px;
+                background: #4b5563;
+            }
+            .gradient-text {
+                background: linear-gradient(135deg, #3b82f6, #8b5cf6);
+                -webkit-background-clip: text;
+                -webkit-text-fill-color: transparent;
+            }
+            .metric-card {
+                transition: all 0.2s ease;
+            }
+            .metric-card:hover {
+                transform: translateY(-2px);
+                box-shadow: 0 10px 40px -10px rgba(59, 130, 246, 0.3);
+            }
         </style>
     </head>
-    <body>
-        <div class="container">
-            <h1>RLM Trajectory Visualizer</h1>
-            <p>Upload a JSONL trajectory file to visualize:</p>
-            <input type="file" id="fileInput" accept=".jsonl,.json">
-            <div id="content"></div>
+    <body class="bg-slate-950 text-slate-200 min-h-screen">
+        <!-- Header -->
+        <header class="glass-panel sticky top-0 z-50 border-b border-slate-800">
+            <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4">
+                <div class="flex items-center justify-between">
+                    <div class="flex items-center gap-3">
+                        <i data-lucide="git-branch" class="w-8 h-8 text-blue-500"></i>
+                        <div>
+                            <h1 class="text-2xl font-bold gradient-text">RLM Visualizer</h1>
+                            <p class="text-xs text-slate-400">Recursive Language Model Trajectory Explorer</p>
+                        </div>
+                    </div>
+                    <div class="flex items-center gap-4">
+                        <button onclick="loadFromServer()" class="flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 rounded-lg transition-colors">
+                            <i data-lucide="refresh-cw" class="w-4 h-4"></i>
+                            <span>Refresh</span>
+                        </button>
+                        <label class="flex items-center gap-2 px-4 py-2 bg-slate-800 hover:bg-slate-700 rounded-lg cursor-pointer transition-colors">
+                            <i data-lucide="upload" class="w-4 h-4"></i>
+                            <span>Upload JSONL</span>
+                            <input type="file" id="fileInput" accept=".jsonl,.json" class="hidden" onchange="handleFileUpload(event)">
+                        </label>
+                    </div>
+                </div>
+            </div>
+        </header>
+
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+            <div class="grid grid-cols-1 lg:grid-cols-4 gap-6">
+                <!-- Sidebar: Trajectory List -->
+                <div class="lg:col-span-1">
+                    <div class="glass-panel rounded-xl p-4">
+                        <h2 class="text-lg font-semibold mb-4 flex items-center gap-2">
+                            <i data-lucide="list" class="w-5 h-5 text-purple-400"></i>
+                            Trajectories
+                        </h2>
+                        <div id="trajectoryList" class="space-y-2 max-h-[calc(100vh-250px)] overflow-y-auto">
+                            <div class="text-slate-500 text-sm text-center py-8">
+                                No trajectories loaded
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Main Content -->
+                <div class="lg:col-span-3 space-y-6">
+                    <!-- Welcome State -->
+                    <div id="welcomeState" class="glass-panel rounded-xl p-12 text-center">
+                        <i data-lucide="workflow" class="w-16 h-16 mx-auto mb-4 text-slate-600"></i>
+                        <h3 class="text-xl font-semibold mb-2">Welcome to RLM Visualizer</h3>
+                        <p class="text-slate-400 mb-6">Upload a trajectory JSONL file or load from server to explore your RLM runs</p>
+                        <div class="flex justify-center gap-4">
+                            <button onclick="document.getElementById('fileInput').click()" class="px-6 py-3 bg-blue-600 hover:bg-blue-700 rounded-lg font-medium transition-colors">
+                                Upload File
+                            </button>
+                            <button onclick="loadFromServer()" class="px-6 py-3 bg-slate-800 hover:bg-slate-700 rounded-lg font-medium transition-colors">
+                                Load from Server
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- Trajectory Detail View -->
+                    <div id="trajectoryDetail" class="hidden space-y-6">
+                        <!-- Metadata Cards -->
+                        <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
+                            <div class="metric-card glass-panel rounded-xl p-4">
+                                <div class="flex items-center gap-2 text-slate-400 text-sm mb-1">
+                                    <i data-lucide="cpu" class="w-4 h-4"></i>
+                                    Model
+                                </div>
+                                <div id="metaModel" class="text-lg font-semibold text-white">-</div>
+                            </div>
+                            <div class="metric-card glass-panel rounded-xl p-4">
+                                <div class="flex items-center gap-2 text-slate-400 text-sm mb-1">
+                                    <i data-lucide="layers" class="w-4 h-4"></i>
+                                    Max Depth
+                                </div>
+                                <div id="metaDepth" class="text-lg font-semibold text-white">-</div>
+                            </div>
+                            <div class="metric-card glass-panel rounded-xl p-4">
+                                <div class="flex items-center gap-2 text-slate-400 text-sm mb-1">
+                                    <i data-lucide="clock" class="w-4 h-4"></i>
+                                    Duration
+                                </div>
+                                <div id="metaDuration" class="text-lg font-semibold text-white">-</div>
+                            </div>
+                            <div class="metric-card glass-panel rounded-xl p-4">
+                                <div class="flex items-center gap-2 text-slate-400 text-sm mb-1">
+                                    <i data-lucide="hash" class="w-4 h-4"></i>
+                                    Iterations
+                                </div>
+                                <div id="metaIterations" class="text-lg font-semibold text-white">-</div>
+                            </div>
+                        </div>
+
+                        <!-- Query Section -->
+                        <div class="glass-panel rounded-xl p-6">
+                            <h3 class="text-lg font-semibold mb-3 flex items-center gap-2">
+                                <i data-lucide="message-square" class="w-5 h-5 text-blue-400"></i>
+                                Query
+                            </h3>
+                            <div id="queryContent" class="text-slate-300 bg-slate-900/50 rounded-lg p-4"></div>
+                        </div>
+
+                        <!-- Timeline -->
+                        <div class="glass-panel rounded-xl p-6">
+                            <h3 class="text-lg font-semibold mb-6 flex items-center gap-2">
+                                <i data-lucide="timeline" class="w-5 h-5 text-purple-400"></i>
+                                Execution Timeline
+                            </h3>
+                            <div id="timeline" class="relative space-y-6">
+                                <!-- Timeline items will be inserted here -->
+                            </div>
+                        </div>
+
+                        <!-- Final Answer -->
+                        <div id="finalAnswerSection" class="hidden glass-panel rounded-xl p-6 border-2 border-green-500/30 bg-green-500/5">
+                            <h3 class="text-lg font-semibold mb-3 flex items-center gap-2 text-green-400">
+                                <i data-lucide="check-circle" class="w-5 h-5"></i>
+                                Final Answer
+                            </h3>
+                            <div id="finalAnswerContent" class="text-white text-lg"></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
         </div>
+
         <script>
-            document.getElementById('fileInput').addEventListener('change', function(e) {
-                const file = e.target.files[0];
+            // Initialize Lucide icons
+            lucide.createIcons();
+
+            let currentTrajectories = [];
+            let selectedTrajectory = null;
+
+            function handleFileUpload(event) {
+                const file = event.target.files[0];
+                if (!file) return;
+
                 const reader = new FileReader();
                 reader.onload = function(e) {
-                    const lines = e.target.result.split('\\n').filter(l => l.trim());
-                    let html = '';
-                    lines.forEach((line, i) => {
-                        try {
-                            const data = JSON.parse(line);
-                            html += renderTrajectory(data, i);
-                        } catch (err) {
-                            html += `<div class="trajectory">Error parsing line ${i}: ${err}</div>`;
-                        }
-                    });
-                    document.getElementById('content').innerHTML = html;
+                    try {
+                        parseTrajectoryData(e.target.result);
+                    } catch (err) {
+                        showError('Error parsing file: ' + err.message);
+                    }
                 };
                 reader.readAsText(file);
-            });
+            }
 
-            function renderTrajectory(data, idx) {
-                let html = `<div class="trajectory">`;
-                html += `<h3>Query: ${data.query || 'N/A'}</h3>`;
-                html += `<p>Result: ${data.result || 'N/A'}</p>`;
+            function parseTrajectoryData(data) {
+                const lines = data.split('\\n').filter(l => l.trim());
+                currentTrajectories = [];
 
-                if (data.code_executions && data.code_executions.length > 0) {
-                    data.code_executions.forEach((exec, i) => {
-                        html += `<div class="code">${escapeHtml(exec.code)}</div>`;
-                        html += `<div class="output">Output: ${escapeHtml(exec.output)}</div>`;
-                        if (exec.final_answer) {
-                            html += `<div class="final">Final Answer: ${escapeHtml(exec.final_answer)}</div>`;
+                lines.forEach((line, i) => {
+                    try {
+                        const entry = JSON.parse(line);
+                        if (entry.type === 'metadata') {
+                            currentTrajectories.push({
+                                id: entry.data.trajectory_id || 'traj-' + i,
+                                metadata: entry.data,
+                                iterations: [],
+                                subcalls: [],
+                                codeExecutions: []
+                            });
+                        } else if (entry.type === 'iteration') {
+                            const lastTraj = currentTrajectories[currentTrajectories.length - 1];
+                            if (lastTraj) lastTraj.iterations.push(entry.data);
+                        } else if (entry.type === 'subcall') {
+                            const lastTraj = currentTrajectories[currentTrajectories.length - 1];
+                            if (lastTraj) lastTraj.subcalls.push(entry.data);
+                        } else if (entry.type === 'code_execution') {
+                            const lastTraj = currentTrajectories[currentTrajectories.length - 1];
+                            if (lastTraj) lastTraj.codeExecutions.push(entry.data);
+                        } else {
+                            // Legacy format: single trajectory
+                            currentTrajectories.push({
+                                id: entry.trajectory_id || 'traj-' + i,
+                                metadata: entry.metadata || {},
+                                query: entry.query,
+                                result: entry.result,
+                                iterations: entry.iterations || [],
+                                subcalls: entry.sub_queries || [],
+                                codeExecutions: entry.code_executions || [],
+                                finalAnswer: entry.final_answer
+                            });
                         }
+                    } catch (err) {
+                        console.error('Error parsing line', i, err);
+                    }
+                });
+
+                renderTrajectoryList();
+                if (currentTrajectories.length > 0) {
+                    selectTrajectory(0);
+                }
+            }
+
+            function renderTrajectoryList() {
+                const list = document.getElementById('trajectoryList');
+                if (currentTrajectories.length === 0) {
+                    list.innerHTML = '<div class="text-slate-500 text-sm text-center py-8">No trajectories loaded</div>';
+                    return;
+                }
+
+                list.innerHTML = currentTrajectories.map((traj, i) => {
+                    const meta = traj.metadata || {};
+                    const model = meta.root_model || 'Unknown';
+                    const created = meta.created_at ? new Date(meta.created_at).toLocaleString() : 'Unknown';
+                    const isSelected = selectedTrajectory === i;
+
+                    return `
+                        <div onclick="selectTrajectory(${i})"
+                             class="p-3 rounded-lg cursor-pointer transition-all ${isSelected ? 'bg-blue-600/20 border border-blue-500/50' : 'bg-slate-800/50 hover:bg-slate-800 border border-transparent'}">
+                            <div class="flex items-center gap-2 mb-1">
+                                <i data-lucide="git-commit" class="w-4 h-4 ${isSelected ? 'text-blue-400' : 'text-slate-500'}"></i>
+                                <span class="font-medium text-sm truncate">${traj.id.slice(0, 8)}</span>
+                            </div>
+                            <div class="text-xs text-slate-400 ml-6">
+                                <div class="flex items-center gap-2">
+                                    <i data-lucide="cpu" class="w-3 h-3"></i>
+                                    ${model}
+                                </div>
+                                <div class="flex items-center gap-2 mt-1">
+                                    <i data-lucide="clock" class="w-3 h-3"></i>
+                                    ${created}
+                                </div>
+                            </div>
+                        </div>
+                    `;
+                }).join('');
+
+                lucide.createIcons();
+            }
+
+            function selectTrajectory(index) {
+                selectedTrajectory = index;
+                const traj = currentTrajectories[index];
+                if (!traj) return;
+
+                renderTrajectoryList();
+                renderTrajectoryDetail(traj);
+
+                document.getElementById('welcomeState').classList.add('hidden');
+                document.getElementById('trajectoryDetail').classList.remove('hidden');
+            }
+
+            function renderTrajectoryDetail(traj) {
+                const meta = traj.metadata || {};
+
+                // Update metadata cards
+                document.getElementById('metaModel').textContent = meta.root_model || 'Unknown';
+                document.getElementById('metaDepth').textContent = meta.max_depth || '-';
+                document.getElementById('metaIterations').textContent = (traj.iterations?.length || 0).toString();
+
+                // Calculate duration
+                if (traj.codeExecutions && traj.codeExecutions.length > 0) {
+                    const totalTime = traj.codeExecutions.reduce((sum, exec) => sum + (exec.execution_time_ms || 0), 0);
+                    document.getElementById('metaDuration').textContent = (totalTime / 1000).toFixed(2) + 's';
+                } else {
+                    document.getElementById('metaDuration').textContent = '-';
+                }
+
+                // Query
+                const query = traj.query || traj.iterations?.[0]?.prompt || 'No query available';
+                document.getElementById('queryContent').textContent = query;
+
+                // Timeline
+                renderTimeline(traj);
+
+                // Final Answer
+                const finalAnswer = traj.finalAnswer || (traj.codeExecutions && traj.codeExecutions[traj.codeExecutions.length - 1]?.final_answer);
+                if (finalAnswer) {
+                    document.getElementById('finalAnswerSection').classList.remove('hidden');
+                    document.getElementById('finalAnswerContent').textContent = finalAnswer;
+                } else {
+                    document.getElementById('finalAnswerSection').classList.add('hidden');
+                }
+            }
+
+            function renderTimeline(traj) {
+                const timeline = document.getElementById('timeline');
+                let html = '<div class="timeline-line"></div>';
+
+                // Combine iterations and code executions
+                const steps = [];
+
+                if (traj.iterations) {
+                    traj.iterations.forEach((iter, i) => {
+                        steps.push({
+                            type: 'iteration',
+                            step: iter.step || i + 1,
+                            prompt: iter.prompt,
+                            response: iter.response,
+                            time: iter.execution_time_ms
+                        });
                     });
                 }
 
-                if (data.sub_queries && data.sub_queries.length > 0) {
-                    html += `<div class="subquery">`;
-                    data.sub_queries.forEach(sq => {
-                        html += `<p>Sub-query: ${sq.query} → ${sq.result}</p>`;
+                if (traj.codeExecutions) {
+                    traj.codeExecutions.forEach((exec, i) => {
+                        steps.push({
+                            type: 'code',
+                            step: i + 1,
+                            code: exec.code,
+                            output: exec.output,
+                            success: exec.success,
+                            error: exec.error,
+                            finalAnswer: exec.final_answer,
+                            time: exec.execution_time_ms
+                        });
                     });
-                    html += `</div>`;
                 }
 
-                html += `</div>`;
-                return html;
+                // Sort by step
+                steps.sort((a, b) => a.step - b.step);
+
+                html += steps.map((step, i) => {
+                    if (step.type === 'iteration') {
+                        return renderIterationStep(step, i);
+                    } else {
+                        return renderCodeStep(step, i);
+                    }
+                }).join('');
+
+                // Subcalls
+                if (traj.subcalls && traj.subcalls.length > 0) {
+                    html += `
+                        <div class="mt-8 pt-6 border-t border-slate-700">
+                            <h4 class="text-md font-semibold mb-4 flex items-center gap-2">
+                                <i data-lucide="git-branch" class="w-4 h-4 text-purple-400"></i>
+                                Sub-queries (${traj.subcalls.length})
+                            </h4>
+                            <div class="tree-branch space-y-4">
+                                ${traj.subcalls.map((sq, i) => renderSubquery(sq, i)).join('')}
+                            </div>
+                        </div>
+                    `;
+                }
+
+                timeline.innerHTML = html;
+                lucide.createIcons();
+
+                // Apply syntax highlighting
+                document.querySelectorAll('pre code').forEach((block) => {
+                    hljs.highlightBlock(block);
+                });
+            }
+
+            function renderIterationStep(step, index) {
+                return `
+                    <div class="relative pl-12">
+                        <div class="absolute left-0 top-0 w-12 flex justify-center">
+                            <div class="w-8 h-8 rounded-full bg-blue-600 flex items-center justify-center text-white text-sm font-semibold">
+                                ${step.step}
+                            </div>
+                        </div>
+                        <div class="bg-slate-900/50 rounded-lg p-4">
+                            <div class="text-xs text-slate-500 mb-2 flex items-center gap-2">
+                                <i data-lucide="message-circle" class="w-3 h-3"></i>
+                                LLM Thought
+                                ${step.time ? `<span class="ml-auto">${step.time.toFixed(0)}ms</span>` : ''}
+                            </div>
+                            <div class="text-slate-300 text-sm mb-3">${escapeHtml(step.prompt?.slice(0, 200) || 'No prompt')}${step.prompt?.length > 200 ? '...' : ''}</div>
+                            ${step.response ? `
+                                <div class="bg-slate-800/50 rounded p-3 text-sm text-slate-400">
+                                    ${escapeHtml(step.response.slice(0, 500))}${step.response.length > 500 ? '...' : ''}
+                                </div>
+                            ` : ''}
+                        </div>
+                    </div>
+                `;
+            }
+
+            function renderCodeStep(step, index) {
+                const statusColor = step.success ? 'text-green-400' : 'text-red-400';
+                const statusIcon = step.success ? 'check-circle' : 'x-circle';
+
+                return `
+                    <div class="relative pl-12">
+                        <div class="absolute left-0 top-0 w-12 flex justify-center">
+                            <div class="w-8 h-8 rounded-full bg-purple-600 flex items-center justify-center text-white text-sm font-semibold">
+                                <i data-lucide="code" class="w-4 h-4"></i>
+                            </div>
+                        </div>
+                        <div class="bg-slate-900/50 rounded-lg p-4">
+                            <div class="text-xs text-slate-500 mb-2 flex items-center gap-2">
+                                <i data-lucide="terminal" class="w-3 h-3"></i>
+                                Code Execution
+                                <span class="${statusColor} flex items-center gap-1 ml-2">
+                                    <i data-lucide="${statusIcon}" class="w-3 h-3"></i>
+                                    ${step.success ? 'Success' : 'Error'}
+                                </span>
+                                ${step.time ? `<span class="ml-auto">${step.time.toFixed(0)}ms</span>` : ''}
+                            </div>
+                            ${step.code ? `
+                                <pre class="code-block bg-slate-950 rounded-lg p-3 overflow-x-auto mb-3"><code class="language-python">${escapeHtml(step.code)}</code></pre>
+                            ` : ''}
+                            ${step.output ? `
+                                <div class="bg-slate-800/50 rounded p-3 text-sm font-mono text-slate-300">
+                                    <div class="text-xs text-slate-500 mb-1">Output:</div>
+                                    ${escapeHtml(step.output)}
+                                </div>
+                            ` : ''}
+                            ${step.error ? `
+                                <div class="bg-red-900/20 border border-red-500/30 rounded p-3 text-sm text-red-400 mt-3">
+                                    <div class="text-xs text-red-500 mb-1">Error:</div>
+                                    ${escapeHtml(step.error)}
+                                </div>
+                            ` : ''}
+                            ${step.finalAnswer ? `
+                                <div class="bg-green-900/20 border border-green-500/30 rounded p-3 text-sm text-green-400 mt-3">
+                                    <div class="text-xs text-green-500 mb-1">FINAL_VAR:</div>
+                                    ${escapeHtml(step.finalAnswer)}
+                                </div>
+                            ` : ''}
+                        </div>
+                    </div>
+                `;
+            }
+
+            function renderSubquery(sq, index) {
+                return `
+                    <div class="tree-node relative bg-slate-800/30 rounded-lg p-3">
+                        <div class="text-xs text-slate-500 mb-1">Depth ${sq.parent_depth || 0} → ${(sq.parent_depth || 0) + 1}</div>
+                        <div class="text-sm text-slate-300 mb-2">${escapeHtml(sq.prompt?.slice(0, 100) || 'No prompt')}${sq.prompt?.length > 100 ? '...' : ''}</div>
+                        <div class="text-xs text-slate-400">
+                            <span class="text-purple-400">Response:</span> ${escapeHtml(sq.response?.slice(0, 150) || 'No response')}${sq.response?.length > 150 ? '...' : ''}
+                        </div>
+                        ${sq.execution_time ? `<div class="text-xs text-slate-500 mt-1">${sq.execution_time.toFixed(2)}s</div>` : ''}
+                    </div>
+                `;
             }
 
             function escapeHtml(text) {
                 if (!text) return '';
-                return text
-                    .replace(/&/g, '&amp;')
-                    .replace(/</g, '&lt;')
-                    .replace(/>/g, '&gt;')
-                    .replace(/"/g, '&quot;');
+                const div = document.createElement('div');
+                div.textContent = text;
+                return div.innerHTML;
+            }
+
+            function showError(message) {
+                alert('Error: ' + message);
+            }
+
+            async function loadFromServer() {
+                try {
+                    // Try to load from /rlm/trajectory endpoint or similar
+                    const response = await fetch('/rlm/sessions');
+                    if (response.ok) {
+                        const data = await response.json();
+                        console.log('Loaded from server:', data);
+                        // For now, show a placeholder
+                        document.getElementById('welcomeState').classList.remove('hidden');
+                        document.getElementById('trajectoryDetail').classList.add('hidden');
+                        document.getElementById('trajectoryList').innerHTML = `
+                            <div class="text-slate-400 text-sm text-center py-8">
+                                <i data-lucide="info" class="w-8 h-8 mx-auto mb-2"></i>
+                                <p>Server connection established</p>
+                                <p class="text-xs mt-2">Upload a JSONL file to view trajectories</p>
+                            </div>
+                        `;
+                        lucide.createIcons();
+                    } else {
+                        showError('Failed to load from server');
+                    }
+                } catch (err) {
+                    showError('Error connecting to server: ' + err.message);
+                }
             }
         </script>
     </body>
